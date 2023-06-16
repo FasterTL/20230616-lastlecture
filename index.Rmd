@@ -1,0 +1,99 @@
+---
+title: "index"
+author: "Lin Boding"
+date: "2023-06-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+#加载包
+```{r}
+library(tidyverse) 
+library(car)
+library(multcomp)
+library(multcompView)
+library(rstatix)
+library(faraway) #数据来源
+library(ggsci) #用于配色
+
+```
+
+# 探索数据
+```{r}
+?rats #了解数据
+head(rats) #了解其结构
+table(rats$poison, rats$treat) #看实验设计是否均衡
+ggplot(rats, aes(treat, time, color = poison)) +
+  geom_jitter(width = 0.1) + 
+  stat_summary(geom = "line", fun = mean, aes(group = poison)) #大体了解一下数据
+```
+
+通过初步分析可以发现，实验设计是均衡的，可以用最常规的ANOVA，初步可视化发现poison和treat的交互作用是不太重要的。
+提出问题：
+* 小鼠存活时间是否受毒药类型影响
+* 小鼠存活时间是否是处理类型影响
+* 两个因素在影响小鼠存活时有无交互作用
+
+
+# Two-way ANOVA of rats
+## 检验poison和treat的交互效应
+```{r}
+mod.1 <- aov(time ~ poison * treat, data = rats)  
+summary(mod.1)
+rstatix::eta_squared(mod.1)
+```
+解读：
+* poison:treat：两者在影响time时交互作用不显著（p=0.112）
+* 交互作用比两个主效应小很多
+* 不用保留交互作用，直接分析主效应
+
+## 没有交互作用的双因素方差分析
+```{r}
+mod.1a <- aov(time ~ poison + treat, data = rats)
+summary(mod.1a)
+post.1 <- TukeyHSD(mod.1a, which = "poison") #单独事后比较，分析poison的主效应
+post.1
+p.value_p <- post.1$poison[, 4]
+let_p <- multcompLetters(p.value_p) # 事后比较结果转化为字母表达
+let_p
+
+post.2 <- TukeyHSD(mod.1a, which = "treat") #单独事后比较，分析treat的主效应
+post.2
+p.value_t <- post.2$treat[, 4]
+let_t <- multcompLetters(p.value_t) # 事后比较结果转化为字母表达
+let_t
+```
+经过事后比较发现：
+* 毒药I和II没有显著区别，毒药III和它们有显著区别
+* A、B、C、D四种处理之间都有显著区别
+
+# 结果可视化
+```{r}
+d_pvalue_t <- data.frame(treat=c("B","C","D","A"), 
+                       label_t=as.vector(let_t$Letters)) 
+d_pvalue_p <- data.frame(poison=c("II", "III", "I"),
+                         label_p=as.vector(let_p$Letters))
+
+d_label <- rats |> 
+  group_by(treat, poison) |> 
+  summarise(y_pos=max(time)) |> 
+  left_join(d_pvalue_t, by="treat") |> 
+  left_join(d_pvalue_p, by="poison") # 将字母标注和原数据表格合并
+
+ggplot(rats, aes(treat,time)) +
+  scale_fill_aaas()+
+  scale_color_aaas() +
+  geom_boxplot(outlier.alpha = 0, aes(fill = poison), alpha = 0.3) + 
+  geom_jitter(aes(color = poison)) +
+  geom_text(data = d_label, aes(x = treat, y = y_pos+0.025, label = label_t), color = "black") +
+  geom_text(data = d_label, aes(x = 0.5, y = 1.3, label = label_p), color = "grey70") + 
+  theme_bw() +
+  theme(legend.position = "none") +
+  facet_wrap(~poison)
+```
+
+结果：这副图是不同毒药和不同处理下小鼠的存活时间，图中左上角灰色字母表示以三种毒药类型为主效应是否有显著区别，字母相同不显著，不相同显著；途中箱线图上方字母表示以四种处理为主效应是否有显著区别。
+回答问题：两种主效应能显著影响小鼠的存活时间，毒药的效果I和II大于III，处理的效果B>D>C>A，交互作用不显著。
